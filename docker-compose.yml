@@ -1,0 +1,65 @@
+#!/usr/bin/env python3
+"""
+Configuration module for Chelyabinsk Weather Bot
+All settings are centralized here
+"""
+
+import os
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+# ============ Bot Configuration ============
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+if not BOT_TOKEN:
+    raise ValueError("❌ BOT_TOKEN environment variable is not set!")
+
+# ============ Server Configuration ============
+WEB_SERVER_PORT = int(os.getenv("PORT", 8080))
+WEBHOOK_PATH = "/webhook"
+
+# ============ API Configuration ============
+WEATHER_API_BASE = "https://api.open-meteo.com/v1/forecast"
+GEOCODING_API = "https://geocoding-api.open-meteo.com/v1/search"
+
+# ============ Bot Settings ============
+BOT_VERSION = "2.0.0"
+DEFAULT_LANGUAGE = "ru"
+MAX_FORECAST_DAYS = 7
+CACHE_TTL = 1800  # 30 minutes in seconds
+
+# ============ Navigation Callbacks ============
+CB_MAIN_MENU = "main_menu"
+CB_BACK = "back"
+CB_EXIT = "exit"
+CB_REFRESH = "refresh"
+
+FORECAST_7DAY = "forecast_7day"
+FORECAST_DETAILED = "forecast_detailed"
+SHOW_RADAR = "show_radar"
+
+DISTRICT_PREFIX = "district_"
+DATE_PREFIX = "date_"
+
+# ============ Chelyabinsk Settings ============
+CHELYABINSK_CENTER_LON = 61.2516
+CHELYABINSK_CENTER_LAT = 55.1644
+TIMEZONE = "Asia/Yekaterinburg"
+
+# ============ UI Settings ============
+MAX_MESSAGE_LENGTH = 4000
+SHOW_EMOJI = True
+USE_MARKDOWN = False  # Use HTML instead
+
+# ============ Logging ============
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+
+# ============ Helper Functions ============
+def get_bot_info():
+    """Return bot information"""
+    return {
+        "name": "Chelyabinsk Weather Bot",
+        "version": BOT_VERSION,
+        "description": "Weather forecast for Chelyabinsk districts"
+    }

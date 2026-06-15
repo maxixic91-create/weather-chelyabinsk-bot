@@ -1,0 +1,296 @@
+"""
+Open-Meteo API client with caching and error handling
+"""
+
+import aiohttp
+from datetime import datetime
+from typing import Optional, Dict, List
+from config import WEATHER_API_BASE, TIMEZONE
+
+# Simple in-memory cache
+_cache = {}
+
+async def get_forecast_7day(latitude: float, longitude: float) -> Optional[Dict]:
+    """
+    Get 7-day weather forecast from Open-Meteo API
+    
+    Args:
+        latitude: Latitude in degrees
+        longitude: Longitude in degrees
+    
+    Returns:
+        Weather data dictionary or None if error
+    """
+    cache_key = f"7day_{latitude}_{longitude}"
+    
+    # Check cache
+    if cache_key in _cache:
+        cached_data, timestamp = _cache[cache_key]
+        # Cache for 30 minutes
+        if (datetime.now() - timestamp).seconds < 1800:
+            return cached_data
+    
+    url = (
+        f"{WEATHER_API_BASE}?"
+        f"latitude={latitude}&longitude={longitude}"
+        f"&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max"
+        f"&timezone={TIMEZONE}"
+        f"&forecast_days=7"
+    )
+    
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    # Cache the result
+                    _cache[cache_key] = (data, datetime.now())
+                    return data
+                else:
+                    return None
+        except Exception as e:
+            return None
+
+async def get_hourly_forecast(latitude: float, longitude: float) -> Optional[Dict]:
+    """
+    Get detailed hourly weather forecast
+    
+    Args:
+        latitude: Latitude in degrees
+        longitude: Longitude in degrees
+    
+    Returns:
+        Hourly weather data or None if error
+    """
+    cache_key = f"hourly_{latitude}_{longitude}"
+    
+    # Check cache
+    if cache_key in _cache:
+        cached_data, timestamp = _cache[cache_key]
+        if (datetime.now() - timestamp).seconds < 1800:
+            return cached_data
+    
+    url = (
+        f"{WEATHER_API_BASE}?"
+        f"latitude={latitude}&longitude={longitude}"
+        f"&hourly=temperature_2m,apparent_temperature,precipitation_probability,windspeed_10m"
+        f"&timezone={TIMEZONE}"
+        f"&forecast_days=7"
+    )
+    
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    _cache[cache_key] = (data, datetime.now())
+                    return data
+                else:
+                    return None
+        except Exception as e:
+            return None
+
+def format_7day_forecast(data: Dict, district_name: str) -> str:
+    """
+    Format daily forecast into readable message
+    
+    Args:
+        data: Weather data from API
+        district_name: Name of the district
+    
+    Returns:
+        Formatted message string
+    """
+    if not data or "daily" not in data:
+        return "❌ Не удалось получить данные о погоде"
+    
+    daily = data["daily"]
+    times = daily.get("time", [])
+    max_temps = daily.get("temperature_2m_max", [])
+    min_temps = daily.get("temperature_2m_min", [])
+    rain_probs = daily.get("precipitation_probability_max", [])
+    
+    message = f"🌤 <b>Прогноз погоды на 7 дней</b>\n"
+    message += f"📍 <b>Район:</b> {district_name}\n"
+    message += f"{'─' * 30}\n\n"
+    
+    for i in range(min(len(times), 7)):
+        date = datetime.fromisoformat(times[i])
+        date_str = date.strftime("%d.%m.%Y")
+        weekday = date.strftime("%A")
+        
+        # Russian weekday names
+        weekdays_ru = {
+            'Monday': 'Понедельник',
+            'Tuesday': 'Вторник',
+            'Wednesday': 'Среда',
+            'Thursday': 'Четверг',
+            'Friday': 'Пятница',
+            'Saturday': 'Суббота',
+            'Sunday': 'Воскресенье'
+        }
+        weekday_ru = weekdays_ru.get(weekday, weekday)
+        
+        max_temp = round(max_temps[i]) if i < len(max_temps) else 0
+        min_temp = round(min_temps[i]) if i < len(min_temps) else 0
+        rain_prob = round(rain_probs[i]) if i < len(rain_probs) else 0
+        
+        # Weather emoji based on conditions
+        if rain_prob > 70:
+            weather_emoji = "🌧"
+            weather_text = "Дождь"
+        elif rain_prob > 40:
+            weather_emoji = "🌦"
+            weather_text = "Возможен дождь"
+        elif max_temp > 25:
+            weather_emoji = "☀️"
+            weather_text = "Солнечно"
+        elif max_temp > 10:
+            weather_emoji = "⛅"
+            weather_text = "Облачно"
+        else:
+            weather_emoji = "☁️"
+            weather_text = "Пасмурно"
+        
+        message += f"<b>{weekday_ru}</b> {weather_emoji}\n"
+        message += f"📅 {date_str}\n"
+        message += f"🌡 <b>{max_temp:+}°</b> / {min_temp:+}°\n"
+        message += f"🌧 {weather_text}: {rain_prob}%\n"
+        message += f"{'─' * 30}\n"
+    
+    # Add recommendation footer
+    message += "\n💡 <b>Совет:</b>\n"
+    highest_rain = max(rain_probs[:7]) if rain_probs else 0
+    if highest_rain > 70:
+        message += "☔ На этой неделе ожидаются дожди. Не забывайте зонт!"
+    elif highest_rain > 40:
+        message += "🌂 Возможны осадки. Лучше иметь зонт с собой."
+    else:
+        message += "✅ Осадков не ожидается. Хорошая погода для прогулок!"
+    
+    return message
+
+def format_hourly_forecast(
+    data: Dict,
+    district_name: str,
+    date_str: str,
+    display_date: str
+) -> str:
+    """
+    Format hourly forecast into readable message
+    
+    Args:
+        data: Weather data from API
+        district_name: Name of the district
+        date_str: Date in DD.MM.YYYY format
+        display_date: Formatted date for display
+    
+    Returns:
+        Formatted message string
+    """
+    if not data or "hourly" not in data:
+        return "❌ Не удалось получить данные о погоде"
+    
+    hourly = data["hourly"]
+    times = hourly.get("time", [])
+    temps = hourly.get("temperature_2m", [])
+    feels = hourly.get("apparent_temperature", [])
+    rains = hourly.get("precipitation_probability", [])
+    winds = hourly.get("windspeed_10m", [])
+    
+    # Find start index for selected date
+    target_date = datetime.strptime(date_str, "%d.%m.%Y").date()
+    start_idx = -1
+    
+    for i, time_str in enumerate(times):
+        time_date = datetime.fromisoformat(time_str).date()
+        if time_date == target_date:
+            start_idx = i
+            break
+    
+    if start_idx == -1:
+        return "❌ Данные за выбранную дату не найдены"
+    
+    message = f"📊 <b>Подробный почасовой прогноз</b>\n"
+    message += f"📍 <b>Район:</b> {district_name}\n"
+    message += f"📅 <b>Дата:</b> {display_date}\n"
+    message += f"{'═' * 35}\n\n"
+    
+    # Track max rain
+    max_rain = 0
+    max_rain_hour = -1
+    
+    # Display hours in two columns for better readability
+    for hour in range(24):
+        idx = start_idx + hour
+        if idx >= len(times):
+            break
+        
+        time_hour = datetime.fromisoformat(times[idx]).hour
+        temp = round(temps[idx]) if idx < len(temps) else 0
+        feel = round(feels[idx]) if idx < len(feels) else 0
+        rain = round(rains[idx]) if idx < len(rains) else 0
+        wind = round(winds[idx]) if idx < len(winds) else 0
+        
+        # Track max rain
+        if rain > max_rain:
+            max_rain = rain
+            max_rain_hour = hour
+        
+        # Weather emoji
+        if rain > 70:
+            emoji = "🌧"
+        elif rain > 40:
+            emoji = "🌦"
+        elif temp > 25:
+            emoji = "☀️"
+        elif temp > 10:
+            emoji = "⛅"
+        else:
+            emoji = "☁️"
+        
+        # Temperature color indicator
+        temp_indicator = "🔥" if temp > 25 else "❄️" if temp < -10 else ""
+        
+        message += (
+            f"<b>{time_hour:02d}:00</b> {emoji} "
+            f"{temp_indicator} <b>{temp:+}°</b>\n"
+            f"   └ ощущается {feel:+}° | 🌧{rain}% | 🌬{wind} м/с\n"
+        )
+        
+        # Add separator every 6 hours
+        if hour in [5, 11, 17, 23]:
+            message += f"  {'.' * 30}\n"
+    
+    # Add max rain info
+    if max_rain_hour >= 0:
+        message += f"\n{'═' * 35}\n"
+        message += f"📈 <b>Максимальная вероятность дождя:</b>\n"
+        message += f"   {max_rain}% в период {max_rain_hour:02d}:00-{max_rain_hour+2:02d}:00\n"
+    
+    # Add recommendations
+    message += f"\n💡 <b>Рекомендации на сегодня:</b>\n"
+    
+    if max_rain > 70:
+        message += "☔ <b>Обязательно возьмите зонт!</b>\n"
+        message += "   Ожидаются сильные осадки\n"
+        message += "   👔 Одевайтесь по погоде, берите непромокаемую обувь\n"
+    elif max_rain > 40:
+        message += "🌂 <b>Лучше взять зонт</b>\n"
+        message += "   Возможны кратковременные осадки\n"
+    else:
+        message += "✅ <b>Осадков не ожидается</b>\n"
+        message += "   Отличная погода для прогулок!\n"
+    
+    # Temperature advice
+    avg_temp = sum(temps[start_idx:start_idx+24]) / 24 if len(temps) > start_idx else 0
+    if avg_temp > 25:
+        message += "🔥 Жарко! Пейте больше воды, носите головной убор\n"
+    elif avg_temp < -15:
+        message += "🧤 Очень холодно! Одевайтесь максимально тепло\n"
+    elif avg_temp < 0:
+        message += "🧣 Холодно, одевайтесь теплее\n"
+    
+    message += f"\n<i>Данные обновлены: {datetime.now().strftime('%H:%M:%S')}</i>"
+    
+    return message
